@@ -1,0 +1,4 @@
+/generated_client/
+/venv/
+.DS_Store
+/target/

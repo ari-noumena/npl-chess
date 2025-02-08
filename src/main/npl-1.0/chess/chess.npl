@@ -1,0 +1,379 @@
+package chess;
+
+enum PieceType {
+    Pawn, Knight, Bishop, Rook, Queen, King
+}
+
+enum PieceColor {
+    White, Black
+}
+
+struct Position {
+    x: Number,  // 0-7 representing a-h
+    y: Number   // 0-7 representing 1-8
+}
+
+struct Piece {
+    type: PieceType,
+    color: PieceColor,
+    position: Position
+}
+
+struct Move {
+    from: Position,
+    to: Position
+}
+
+@api
+protocol[black, white] Chess() {
+    initial state ongoing;
+    final state checkmate;
+    final state stalemate;
+    final state draw;
+
+    private var board = listOf<Piece>();
+    private var currentTurn = PieceColor.White;
+    private var moveHistory = listOf<Move>();
+
+    init {
+        // Set up initial board position
+        // White pieces
+        board = board.with(Piece(PieceType.Rook, PieceColor.White, Position(0, 0)));
+        board = board.with(Piece(PieceType.Knight, PieceColor.White, Position(1, 0)));
+        board = board.with(Piece(PieceType.Bishop, PieceColor.White, Position(2, 0)));
+        board = board.with(Piece(PieceType.Queen, PieceColor.White, Position(3, 0)));
+        board = board.with(Piece(PieceType.King, PieceColor.White, Position(4, 0)));
+        board = board.with(Piece(PieceType.Bishop, PieceColor.White, Position(5, 0)));
+        board = board.with(Piece(PieceType.Knight, PieceColor.White, Position(6, 0)));
+        board = board.with(Piece(PieceType.Rook, PieceColor.White, Position(7, 0)));
+
+        // White pawns
+        var indices = listOf(0, 1, 2, 3, 4, 5, 6, 7);
+        for (i in indices) {
+            board = board.with(Piece(PieceType.Pawn, PieceColor.White, Position(i, 1)));
+        };
+
+        // Black pieces
+        board = board.with(Piece(PieceType.Rook, PieceColor.Black, Position(0, 7)));
+        board = board.with(Piece(PieceType.Knight, PieceColor.Black, Position(1, 7)));
+        board = board.with(Piece(PieceType.Bishop, PieceColor.Black, Position(2, 7)));
+        board = board.with(Piece(PieceType.Queen, PieceColor.Black, Position(3, 7)));
+        board = board.with(Piece(PieceType.King, PieceColor.Black, Position(4, 7)));
+        board = board.with(Piece(PieceType.Bishop, PieceColor.Black, Position(5, 7)));
+        board = board.with(Piece(PieceType.Knight, PieceColor.Black, Position(6, 7)));
+        board = board.with(Piece(PieceType.Rook, PieceColor.Black, Position(7, 7)));
+
+        // Black pawns
+        for (i in indices) {
+            board = board.with(Piece(PieceType.Pawn, PieceColor.Black, Position(i, 6)));
+        };
+    }
+
+    function simulateMove(move: Move) returns List<Piece> -> {
+        return updateBoard(move);
+    }
+
+    function isValidMove(move: Move) returns Boolean -> {
+        if (move.to.x < 0 || move.to.x >= 8 || move.to.y < 0 || move.to.y >= 8) {
+            return false;
+        };
+
+        var piece = board.findFirstOrNone(function(p: Piece) ->
+            p.position.x == move.from.x && p.position.y == move.from.y
+        ).getOrFail();
+
+        if (piece.color != currentTurn) {
+            return false;
+        };
+        
+        var destPiece = board.findFirstOrNone(function(p: Piece) ->
+            p.position.x == move.to.x && p.position.y == move.to.y
+        );
+        
+        if (destPiece.isPresent() && destPiece.getOrFail().color == piece.color) {
+            return false;
+        };
+
+        // Piece-specific movement validation
+        match (piece.type) {
+            PieceType.Pawn -> {
+                var direction = if (piece.color == PieceColor.White) 1 else -1;
+                var isFirstMove = (piece.color == PieceColor.White && piece.position.y == 1) ||
+                                (piece.color == PieceColor.Black && piece.position.y == 6);
+                
+                // Normal move
+                if (move.to.x == move.from.x && move.to.y == move.from.y + direction) {
+                    return !destPiece.isPresent();
+                };
+                
+                // First double move
+                if (isFirstMove && move.to.x == move.from.x && 
+                    move.to.y == move.from.y + (2 * direction)) {
+                    return !destPiece.isPresent() && !isPieceBetween(move);
+                };
+                
+                // Capture
+                if (abs(move.to.x - move.from.x) == 1 && 
+                    move.to.y == move.from.y + direction) {
+                    return destPiece.isPresent();
+                };
+                
+                return false;
+            }
+            PieceType.Knight -> {
+                var dx = abs(move.to.x - move.from.x);
+                var dy = abs(move.to.y - move.from.y);
+                return (dx == 2 && dy == 1) || (dx == 1 && dy == 2);
+            }
+            PieceType.Bishop -> {
+                var dx = abs(move.to.x - move.from.x);
+                var dy = abs(move.to.y - move.from.y);
+                return dx == dy && !isPieceBetween(move);
+            }
+            PieceType.Rook -> {
+                return ((move.from.x == move.to.x) || (move.from.y == move.to.y)) &&
+                       !isPieceBetween(move);
+            }
+            PieceType.Queen -> {
+                var dx = abs(move.to.x - move.from.x);
+                var dy = abs(move.to.y - move.from.y);
+                return ((dx == dy) || (move.from.x == move.to.x) || (move.from.y == move.to.y)) &&
+                       !isPieceBetween(move);
+            }
+            PieceType.King -> {
+                var dx = abs(move.to.x - move.from.x);
+                var dy = abs(move.to.y - move.from.y);
+                return dx <= 1 && dy <= 1;
+            }
+        };
+    }
+
+    function abs(n: Number) returns Number -> {
+        return if (n < 0) -n else n;
+    }
+
+    function isPieceBetween(move: Move) returns Boolean -> {
+        var dx = if (move.to.x > move.from.x) 1 
+                else if (move.to.x < move.from.x) -1 
+                else 0;
+        var dy = if (move.to.y > move.from.y) 1 
+                else if (move.to.y < move.from.y) -1 
+                else 0;
+        
+        return checkPath(
+            move.from.x + dx,
+            move.from.y + dy,
+            move.to.x,
+            move.to.y,
+            dx,
+            dy
+        );
+    }
+
+    function checkPath(x: Number, y: Number, targetX: Number, targetY: Number, dx: Number, dy: Number) returns Boolean -> {
+        if (x == targetX && y == targetY) {
+            return false;
+        };
+
+        // Safety check for out of bounds
+        if (x < 0 || x >= 8 || y < 0 || y >= 8) {
+            return false;
+        };
+
+        var hasPiece = board.findFirstOrNone(function(p: Piece) ->
+            p.position.x == x && p.position.y == y
+        ).isPresent();
+        
+        if (hasPiece) {
+            return true;
+        };
+        
+        return checkPath(x + dx, y + dy, targetX, targetY, dx, dy);
+    }
+
+    function isInCheck(color: PieceColor) returns Boolean -> {
+        var king = board.findFirstOrNone(function(p: Piece) ->
+            p.type == PieceType.King && p.color == color
+        ).getOrFail();
+        
+        return board.anyMatch(function(p: Piece) ->
+            p.color != color && isValidMove(Move(
+                from = p.position,
+                to = king.position
+            ))
+        );
+    }
+
+    @api
+    permission[white] makeWhiteMove(move: Move) | ongoing {
+        require(currentTurn == PieceColor.White, "Not White's turn");
+        require(isValidMove(move), "Invalid move");
+
+        var newBoard = simulateMove(move);
+        var originalBoard = board;
+        
+        // Simulate move to check if it puts own king in check
+        board = newBoard;
+        var inCheck = isInCheck(PieceColor.White);
+        board = originalBoard;
+        
+        require(!inCheck, "Move would put own king in check");
+        
+        // Actually make the move
+        board = newBoard;
+        moveHistory = moveHistory.with(move);
+        currentTurn = PieceColor.Black;
+
+        if (isCheckmate(PieceColor.Black)) {
+            become checkmate;
+        } else if (isStalemate(PieceColor.Black)) {
+            become stalemate;
+        };
+    }
+
+    @api
+    permission[black] makeBlackMove(move: Move) | ongoing {
+        require(currentTurn == PieceColor.Black, "Not Black's turn");
+        require(isValidMove(move), "Invalid move");
+
+        var newBoard = simulateMove(move);
+        var originalBoard = board;
+        
+        // Simulate move to check if it puts own king in check
+        board = newBoard;
+        var inCheck = isInCheck(PieceColor.Black);
+        board = originalBoard;
+        
+        require(!inCheck, "Move would put own king in check");
+        
+        // Actually make the move
+        board = newBoard;
+        moveHistory = moveHistory.with(move);
+        currentTurn = PieceColor.White;
+
+        if (isCheckmate(PieceColor.White)) {
+            become checkmate;
+        } else if (isStalemate(PieceColor.White)) {
+            become stalemate;
+        };
+    }
+
+    function updateBoard(move: Move) returns List<Piece> -> {
+        var newBoard = board.filter(function(p: Piece) ->
+            !(p.position.x == move.from.x && p.position.y == move.from.y) &&
+            !(p.position.x == move.to.x && p.position.y == move.to.y)
+        );
+
+        var movingPiece = board.findFirstOrNone(function(p: Piece) ->
+            p.position.x == move.from.x && p.position.y == move.from.y
+        ).getOrFail();
+
+        return newBoard.with(Piece(
+            movingPiece.type,
+            movingPiece.color,
+            move.to
+        ));
+    }
+
+    @api
+    permission[white | black] getBoard() returns List<Piece> {
+        return board;
+    }
+
+    @api
+    permission[white | black] getCurrentTurn() returns PieceColor {
+        return currentTurn;
+    }
+
+    function isCheckmate(color: PieceColor) returns Boolean -> {
+        return isInCheck(color) && !hasLegalMoves(color);
+    }
+
+    function isStalemate(color: PieceColor) returns Boolean -> {
+        return !isInCheck(color) && !hasLegalMoves(color);
+    }
+
+    function hasLegalMoves(color: PieceColor) returns Boolean -> {
+        return board.anyMatch(function(piece: Piece) ->
+            piece.color == color && 
+            board.anyMatch(function(target: Piece) ->
+                isValidMove(Move(
+                    from = piece.position,
+                    to = target.position
+                ))
+            ) ||
+            // Check empty squares only in piece's possible range
+            getPossibleMoveSquares(piece).anyMatch(function(pos: Position) ->
+                isValidMove(Move(
+                    from = piece.position,
+                    to = pos
+                ))
+            )
+        );
+    }
+
+    function getPossibleMoveSquares(piece: Piece) returns List<Position> -> {
+        match (piece.type) {
+            PieceType.Pawn -> {
+                var direction = if (piece.color == PieceColor.White) 1 else -1;
+                return listOf(
+                    Position(piece.position.x, piece.position.y + direction),
+                    Position(piece.position.x, piece.position.y + (2 * direction)),
+                    Position(piece.position.x + 1, piece.position.y + direction),
+                    Position(piece.position.x - 1, piece.position.y + direction)
+                );
+            }
+            PieceType.Knight -> {
+                return listOf(
+                    Position(piece.position.x + 2, piece.position.y + 1),
+                    Position(piece.position.x + 2, piece.position.y - 1),
+                    Position(piece.position.x - 2, piece.position.y + 1),
+                    Position(piece.position.x - 2, piece.position.y - 1),
+                    Position(piece.position.x + 1, piece.position.y + 2),
+                    Position(piece.position.x + 1, piece.position.y - 2),
+                    Position(piece.position.x - 1, piece.position.y + 2),
+                    Position(piece.position.x - 1, piece.position.y - 2)
+                );
+            }
+            PieceType.Bishop -> {
+                var squares = listOf<Position>();
+                var indices = listOf(-7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7);
+                for (i in indices) {
+                    squares = squares.with(Position(piece.position.x + i, piece.position.y + i));
+                    squares = squares.with(Position(piece.position.x + i, piece.position.y - i));
+                };
+                return squares;
+            }
+            PieceType.Rook -> {
+                var squares = listOf<Position>();
+                var indices = listOf(0, 1, 2, 3, 4, 5, 6, 7);
+                for (i in indices) {
+                    squares = squares.with(Position(i, piece.position.y));
+                    squares = squares.with(Position(piece.position.x, i));
+                };
+                return squares;
+            }
+            PieceType.Queen -> {
+                var squares = listOf<Position>();
+                var indices = listOf(-7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7);
+                for (i in indices) {
+                    squares = squares.with(Position(piece.position.x + i, piece.position.y + i));
+                    squares = squares.with(Position(piece.position.x + i, piece.position.y - i));
+                    squares = squares.with(Position(piece.position.x + i, piece.position.y));
+                    squares = squares.with(Position(piece.position.x, piece.position.y + i));
+                };
+                return squares;
+            }
+            PieceType.King -> {
+                var squares = listOf<Position>();
+                var indices = listOf(-1, 0, 1);
+                for (dx in indices) {
+                    for (dy in indices) {
+                        squares = squares.with(Position(piece.position.x + dx, piece.position.y + dy));
+                    };
+                };
+                return squares;
+            }
+        };
+    }
+}
