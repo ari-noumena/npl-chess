@@ -432,6 +432,9 @@ def main():
                 is_white = st.session_state.username == game.parties.white.entity.get("preferred_username")[0]
                 player_color = PieceColor.WHITE if is_white else PieceColor.BLACK
                 
+                # Get opponent's username
+                opponent_username = game.parties.black.entity.get("preferred_username")[0] if is_white else game.parties.white.entity.get("preferred_username")[0]
+                
                 # Display game state
                 st.subheader("Game Status")
                 if current_turn == player_color:
@@ -442,9 +445,9 @@ def main():
                 # Show player info
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.write("You: " + ("White ⚪" if is_white else "Black ⚫"))
+                    st.write(f"You: {st.session_state.username} ({'White ⚪' if is_white else 'Black ⚫'})")
                 with col2:
-                    st.write("Opponent: " + ("Black ⚫" if is_white else "White ⚪"))
+                    st.write(f"Opponent: {opponent_username} ({'Black ⚫' if is_white else 'White ⚪'})")
                 
                 # Display the board from player's perspective
                 display_board(board, is_white=is_white)
@@ -540,12 +543,21 @@ def main():
                 else:
                     for game in games:
                         with st.container():
-                            col1, col2, col3 = st.columns([2, 2, 1])
+                            col1, col2, col3, col4 = st.columns([1.5, 1.5, 1, 1])
+                            
+                            # Get player's color and opponent's username
+                            is_white = st.session_state.username == game.parties.white.entity.get("preferred_username")[0]
+                            opponent_username = game.parties.black.entity.get("preferred_username")[0] if is_white else game.parties.white.entity.get("preferred_username")[0]
+                            player_color = "White ⚪" if is_white else "Black ⚫"
+                            opponent_color = "Black ⚫" if is_white else "White ⚪"
+                            
                             with col1:
                                 st.write(f"Game ID: {game.id}")
                             with col2:
-                                st.write(f"State: {game.state}")
+                                st.write(f"vs {opponent_username}")
                             with col3:
+                                st.write(f"You: {player_color}")
+                            with col4:
                                 if st.button("View Game", key=game.id):
                                     st.session_state.active_game_id = game.id
                                     st.rerun()
