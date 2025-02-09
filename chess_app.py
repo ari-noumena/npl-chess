@@ -2,14 +2,32 @@ import streamlit as st
 import openapi_client
 from openapi_client.models import ChessCreate, ChessParties, Party, PieceType, PieceColor
 import requests
-from typing import Dict, List
+from typing import Dict, List, Callable
 from dataclasses import dataclass
+import functools
 
 @dataclass
 class AuthConfig:
     auth_url: str = "https://keycloak-platformdemo-chess.noumena.cloud/realms/noumena"
     client_id: str = "noumena"
     client_secret: str = "test"
+
+def with_token_refresh(func: Callable):
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return func(self, *args, **kwargs)
+        except Exception as e:
+            if "token" in str(e).lower() or "unauthorized" in str(e).lower():
+                try:
+                    self.ensure_valid_token()
+                    return func(self, *args, **kwargs)
+                except ValueError as ve:
+                    st.error(str(ve))
+                    st.session_state.clear()
+                    st.rerun()
+            raise e
+    return wrapper
 
 class ChessApp:
     def __init__(self):
@@ -19,8 +37,7 @@ class ChessApp:
         )
         self.auth_config = AuthConfig()
 
-    def fetch_access_token(self, username: str, password: str) -> str:
-        """Fetch an access token from the auth server."""
+    def fetch_access_token(self, username: str, password: str) -> Dict[str, str]:
         url = f"{self.auth_config.auth_url}/protocol/openid-connect/token"
 
         data = {
@@ -40,26 +57,55 @@ class ChessApp:
             response.raise_for_status()
             token_data = response.json()
             
-            if "access_token" not in token_data:
+            if "access_token" not in token_data or "refresh_token" not in token_data:
                 raise ValueError(f"Invalid token response: {token_data}")
                 
-            return token_data["access_token"]
+            return token_data
             
         except Exception as e:
             raise ValueError(f"Failed to fetch access token: {str(e)}")
 
-    def _create_party(self, claims: Dict[str, List[str]]) -> Party:
-        return Party(
-            entity=claims,
-            access={}  # Access claims can be empty for this use case
-        )
+    def refresh_token(self, refresh_token: str) -> Dict[str, str]:
+        url = f"{self.auth_config.auth_url}/protocol/openid-connect/token"
 
-    def _username_to_party(self, username: str) -> Party:
-        return self._create_party({
-            "preferred_username": [username],
-            "iss": [self.auth_config.auth_url]
-        })
+        data = {
+            "grant_type": "refresh_token",
+            "client_id": self.auth_config.client_id,
+            "client_secret": self.auth_config.client_secret,
+            "refresh_token": refresh_token
+        }
 
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+
+        try:
+            response = requests.post(url, headers=headers, data=data)
+            response.raise_for_status()
+            token_data = response.json()
+            
+            if "access_token" not in token_data or "refresh_token" not in token_data:
+                raise ValueError(f"Invalid token response: {token_data}")
+                
+            return token_data
+        except Exception as e:
+            raise ValueError(f"Failed to refresh token: {str(e)}")
+
+    def ensure_valid_token(self):
+        if not st.session_state.get('refresh_token'):
+            raise ValueError("No refresh token available. Please login again.")
+            
+        try:
+            token_data = self.refresh_token(st.session_state.refresh_token)
+            self.configuration.access_token = token_data["access_token"]
+            self.api_client = openapi_client.ApiClient(self.configuration)
+            st.session_state.api_client = self.api_client
+            st.session_state.auth_token = token_data["access_token"]
+            st.session_state.refresh_token = token_data["refresh_token"]
+        except Exception as e:
+            raise ValueError("Session expired. Please login again.")
+
+    @with_token_refresh
     def create_chess_instance(self, player_username: str, opponent_username: str, player_color: str) -> None:
         if not st.session_state.get('api_client'):
             raise ValueError("Please login first")
@@ -99,20 +145,22 @@ class ChessApp:
 
     def login(self, username: str, password: str) -> None:
         try:
-            token = self.fetch_access_token(username, password)
-            self.configuration.access_token = token
+            token_data = self.fetch_access_token(username, password)
+            self.configuration.access_token = token_data["access_token"]
             self.api_client = openapi_client.ApiClient(self.configuration)
             st.session_state.api_client = self.api_client
             st.session_state.username = username
-            st.session_state.auth_token = token  # Store token in session state
+            st.session_state.stored_username = username  # Store username for session restoration
+            st.session_state.auth_token = token_data["access_token"]
+            st.session_state.refresh_token = token_data["refresh_token"]
             
             st.success("Successfully logged in!")
-            st.rerun()  # Add this to refresh the page after login
+            st.rerun()
         except Exception as e:
             st.error(f"Login failed: {str(e)}")
 
+    @with_token_refresh
     def get_chess_games(self) -> List[Dict]:
-        """Fetch list of chess games the user has access to."""
         if not st.session_state.get('api_client'):
             raise ValueError("Please login first")
 
@@ -120,24 +168,24 @@ class ChessApp:
         response = api_instance.get_chess_list()
         return response.items
 
+    @with_token_refresh
     def get_board(self, game_id: str) -> List[Dict]:
-        """Fetch the current board state for a game."""
         if not st.session_state.get('api_client'):
             raise ValueError("Please login first")
 
         api_instance = openapi_client.DefaultApi(st.session_state.api_client)
         return api_instance.chess_get_board(game_id)
 
+    @with_token_refresh
     def get_current_turn(self, game_id: str) -> str:
-        """Fetch whose turn it is."""
         if not st.session_state.get('api_client'):
             raise ValueError("Please login first")
 
         api_instance = openapi_client.DefaultApi(st.session_state.api_client)
         return api_instance.chess_get_current_turn(game_id)
 
+    @with_token_refresh
     def make_move(self, game_id: str, from_pos: str, to_pos: str, current_turn: str) -> None:
-        """Make a move in the game."""
         try:
             if not st.session_state.get('api_client'):
                 raise ValueError("Please login first")
@@ -176,13 +224,25 @@ class ChessApp:
                 st.error("Move failed. Please try again.")
             raise ValueError("Move failed")  # Simplified error for the caller
 
+    @with_token_refresh
     def get_game(self, game_id: str):
-        """Fetch game details."""
         if not st.session_state.get('api_client'):
             raise ValueError("Please login first")
 
         api_instance = openapi_client.DefaultApi(st.session_state.api_client)
         return api_instance.get_chess_by_id(game_id)
+
+    def _create_party(self, claims: Dict[str, List[str]]) -> Party:
+        return Party(
+            entity=claims,
+            access={}  # Access claims can be empty for this use case
+        )
+
+    def _username_to_party(self, username: str) -> Party:
+        return self._create_party({
+            "preferred_username": [username],
+            "iss": [self.auth_config.auth_url]
+        })
 
 def display_board(pieces, is_white: bool = True):
     """Display the chess board using Unicode chess pieces."""
@@ -302,10 +362,14 @@ def main():
     # Initialize session state
     if 'username' not in st.session_state:
         st.session_state.username = None
+    if 'stored_username' not in st.session_state:
+        st.session_state.stored_username = None
     if 'api_client' not in st.session_state:
         st.session_state.api_client = None
     if 'auth_token' not in st.session_state:
         st.session_state.auth_token = None
+    if 'refresh_token' not in st.session_state:
+        st.session_state.refresh_token = None
     if 'show_create_form' not in st.session_state:
         st.session_state.show_create_form = False
     if 'active_game_id' not in st.session_state:
@@ -314,17 +378,14 @@ def main():
     app = ChessApp()
 
     # Try to restore session if we have a token
-    if not st.session_state.username and st.session_state.auth_token:
+    if not st.session_state.username and st.session_state.auth_token and st.session_state.refresh_token:
         try:
-            app.configuration.access_token = st.session_state.auth_token
-            app.api_client = openapi_client.ApiClient(app.configuration)
-            api_instance = openapi_client.DefaultApi(app.api_client)
-            api_instance.get_chess_list()  # Test call
-            st.session_state.api_client = app.api_client
-        except:
-            st.session_state.auth_token = None
-            st.session_state.username = None
-            st.session_state.api_client = None
+            app.ensure_valid_token()
+            # If token refresh successful, set username from stored token
+            st.session_state.username = st.session_state.get('stored_username')
+        except ValueError:
+            st.session_state.clear()
+            st.rerun()
 
     # Login section
     if not st.session_state.username:
