@@ -35,6 +35,8 @@ protocol[black, white] Chess() {
     private var currentTurn = PieceColor.White;
     private var moveHistory = listOf<Move>();
 
+    var creationDate: DateTime = now();
+
     init {
         // Set up initial board position
         // White pieces

@@ -5,6 +5,8 @@ import requests
 from typing import Dict, List, Callable
 from dataclasses import dataclass
 import functools
+from datetime import datetime
+import pytz
 
 @dataclass
 class AuthConfig:
@@ -358,6 +360,68 @@ def display_board(pieces, is_white: bool = True):
     # Display the board
     st.markdown(''.join(html), unsafe_allow_html=True)
 
+def format_game_date(game) -> tuple[float, str]:
+    """Format the game's creation date for display and sorting."""
+    try:
+        # Parse the ISO format date with timezone
+        creation_date = game.creation_date
+        
+        # Remove the timezone name in brackets if present
+        if '[' in creation_date:
+            creation_date = creation_date.split('[')[0]
+            
+        # Parse the ISO format date with timezone
+        dt = datetime.fromisoformat(creation_date)
+        
+        # Convert to UTC for consistent timestamps
+        if dt.tzinfo:
+            dt = dt.astimezone(pytz.UTC)
+        
+        # Get current time in UTC
+        now = datetime.now(pytz.UTC)
+        
+        # Calculate time difference
+        diff = (now - dt).total_seconds()
+        
+        if diff < 10:  # Less than 10 seconds
+            formatted = "Just now"
+        elif diff < 60:  # Less than a minute
+            seconds = int(diff)
+            formatted = f"{seconds}s ago"
+        elif diff < 3600:  # Less than an hour
+            minutes = int(diff / 60)
+            formatted = f"{minutes}m ago"
+        elif diff < 7200:  # Less than 2 hours - show hours and minutes
+            hours = int(diff / 3600)
+            minutes = int((diff % 3600) / 60)
+            if minutes > 0:
+                formatted = f"{hours}h {minutes}m ago"
+            else:
+                formatted = f"{hours}h ago"
+        elif diff < 86400:  # Less than a day
+            hours = int(diff / 3600)
+            formatted = f"{hours}h ago"
+        elif diff < 604800:  # Less than a week
+            days = int(diff / 86400)
+            formatted = f"{days}d ago"
+        elif diff < 2592000:  # Less than a month (30 days)
+            weeks = int(diff / 604800)
+            formatted = f"{weeks}w ago"
+        else:
+            formatted = dt.strftime("%Y-%m-%d")
+        
+        return dt.timestamp(), formatted
+    except Exception as e:
+        print(f"Error parsing date: {e}")  # Debug log
+        return 0, "Unknown"
+
+def format_game_state(state: str) -> str:
+    """Format the game state for display."""
+    # Remove the ChessStates. prefix and convert to title case
+    if state.startswith("ChessStates."):
+        state = state[len("ChessStates."):]
+    return state.lower().replace("_", " ").title()
+
 def main():
     # Initialize session state
     if 'username' not in st.session_state:
@@ -415,25 +479,27 @@ def main():
 
         # Main content
         if st.session_state.active_game_id:
-            st.header(f"Game: {st.session_state.active_game_id}")
-            
-            # Back button
-            if st.button("Back to Games List"):
-                st.session_state.active_game_id = None
-                st.rerun()
-
             try:
-                # Get game details and current state
+                # Get game details first to show opponent in header
                 game = app.get_game(st.session_state.active_game_id)
+                is_white = st.session_state.username == game.parties.white.entity.get("preferred_username")[0]
+                opponent_username = game.parties.black.entity.get("preferred_username")[0] if is_white else game.parties.white.entity.get("preferred_username")[0]
+                
+                # Show game header with opponent
+                st.header(f"Game vs {opponent_username}")
+                st.caption(f"ID: {st.session_state.active_game_id[:8]}...")
+                
+                # Back button
+                if st.button("Back to Games List"):
+                    st.session_state.active_game_id = None
+                    st.rerun()
+
+                # Get remaining game state
                 board = app.get_board(st.session_state.active_game_id)
                 current_turn = app.get_current_turn(st.session_state.active_game_id)
                 
                 # Get player's color in this game
-                is_white = st.session_state.username == game.parties.white.entity.get("preferred_username")[0]
                 player_color = PieceColor.WHITE if is_white else PieceColor.BLACK
-                
-                # Get opponent's username
-                opponent_username = game.parties.black.entity.get("preferred_username")[0] if is_white else game.parties.white.entity.get("preferred_username")[0]
                 
                 # Display game state
                 st.subheader("Game Status")
@@ -530,8 +596,15 @@ def main():
             # Games list view
             st.header("Your Chess Games")
             
-            col1, col2 = st.columns([4, 1])
+            col1, col2, col3 = st.columns([3, 1, 1])
             with col2:
+                sort_direction = st.radio(
+                    "Sort by",
+                    ["Newest first", "Oldest first"],
+                    horizontal=True,
+                    label_visibility="collapsed"
+                )
+            with col3:
                 if st.button("Create New Game"):
                     st.session_state.show_create_form = True
                     st.rerun()
@@ -541,9 +614,16 @@ def main():
                 if not games:
                     st.info("No games found. Create a new game to get started!")
                 else:
-                    for game in games:
+                    # Sort games by creation date
+                    sorted_games = sorted(
+                        games,
+                        key=lambda g: format_game_date(g)[0],
+                        reverse=(sort_direction == "Newest first")
+                    )
+                    
+                    for game in sorted_games:
                         with st.container():
-                            col1, col2, col3, col4 = st.columns([1.5, 1.5, 1, 1])
+                            col1, col2, col3, col4, col5 = st.columns([1, 1.5, 1, 1, 1])
                             
                             # Get player's color and opponent's username
                             is_white = st.session_state.username == game.parties.white.entity.get("preferred_username")[0]
@@ -551,13 +631,19 @@ def main():
                             player_color = "White ⚪" if is_white else "Black ⚫"
                             opponent_color = "Black ⚫" if is_white else "White ⚪"
                             
+                            # Get formatted date
+                            _, formatted_date = format_game_date(game)
+                            
                             with col1:
-                                st.write(f"Game ID: {game.id}")
+                                st.write(formatted_date)
+                                st.caption(f"ID: {game.id[:8]}...")
                             with col2:
                                 st.write(f"vs {opponent_username}")
                             with col3:
                                 st.write(f"You: {player_color}")
                             with col4:
+                                st.write(f"State: {format_game_state(game.state)}")
+                            with col5:
                                 if st.button("View Game", key=game.id):
                                     st.session_state.active_game_id = game.id
                                     st.rerun()
