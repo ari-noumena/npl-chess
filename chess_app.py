@@ -4,7 +4,6 @@ from openapi_client.models import ChessCreate, ChessParties, Party, PieceType, P
 import requests
 from typing import Dict, List
 from dataclasses import dataclass
-from datetime import datetime, timedelta
 
 @dataclass
 class AuthConfig:
@@ -188,31 +187,11 @@ class ChessApp:
 def display_board(pieces, is_white: bool = True):
     """Display the chess board using Unicode chess pieces."""
     # Create empty board
-    board = [[" " for _ in range(8)] for _ in range(8)]
+    board = [[None for _ in range(8)] for _ in range(8)]
     
-    # Piece symbols - fixed to show correct colors
-    symbols = {
-        (PieceType.PAWN, PieceColor.BLACK): "♙",
-        (PieceType.PAWN, PieceColor.WHITE): "♟",
-        (PieceType.ROOK, PieceColor.BLACK): "♖",
-        (PieceType.ROOK, PieceColor.WHITE): "♜",
-        (PieceType.KNIGHT, PieceColor.BLACK): "♘",
-        (PieceType.KNIGHT, PieceColor.WHITE): "♞",
-        (PieceType.BISHOP, PieceColor.BLACK): "♗",
-        (PieceType.BISHOP, PieceColor.WHITE): "♝",
-        (PieceType.QUEEN, PieceColor.BLACK): "♕",
-        (PieceType.QUEEN, PieceColor.WHITE): "♛",
-        (PieceType.KING, PieceColor.BLACK): "♔",
-        (PieceType.KING, PieceColor.WHITE): "♚"
-    }
+    # Detect theme
+    is_dark_mode = st.get_option("theme.base") == "dark"
     
-    # Place pieces on board
-    for piece in pieces:
-        symbol = symbols.get((piece.type, piece.color), "?")
-        y = 7 - piece.position.y  # Flip y since we display rank 1 at the bottom
-        x = piece.position.x      # x is already correct (a=0, h=7)
-        board[y][x] = symbol
-
     # CSS for the chessboard
     st.markdown("""
         <style>
@@ -244,6 +223,14 @@ def display_board(pieces, is_white: bool = True):
             text-align: center;
             vertical-align: middle;
         }
+        .piece-white {
+            color: rgba(255, 255, 255, 0.95);
+            text-shadow: 0 0 2px rgba(0, 0, 0, 0.4);
+        }
+        .piece-black {
+            color: rgba(0, 0, 0, 0.95);
+            text-shadow: 0 0 2px rgba(255, 255, 255, 0.4);
+        }
         .coordinate {
             color: #f0f0f0;
             display: inline-block;
@@ -261,6 +248,22 @@ def display_board(pieces, is_white: bool = True):
         </style>
     """, unsafe_allow_html=True)
 
+    # Define single set of piece symbols
+    pieces_unicode = {
+        PieceType.PAWN: "♟",
+        PieceType.ROOK: "♜",
+        PieceType.KNIGHT: "♞",
+        PieceType.BISHOP: "♝",
+        PieceType.QUEEN: "♛",
+        PieceType.KING: "♚"
+    }
+    
+    # Place pieces on board
+    for piece in pieces:
+        y = 7 - piece.position.y  # Flip y since we display rank 1 at the bottom
+        x = piece.position.x      # x is already correct (a=0, h=7)
+        board[y][x] = piece
+    
     # Generate HTML for the board
     html = ['<div class="chess-board">']
     
@@ -276,7 +279,12 @@ def display_board(pieces, is_white: bool = True):
         for j, piece in enumerate(row):
             is_light = (i + j) % 2 == 1
             square_class = "square-light" if is_light else "square-dark"
-            html.append(f'<span class="{square_class}">{piece}</span>')
+            piece_class = ""
+            symbol = " "
+            if piece is not None:
+                piece_class = " piece-white" if piece.color == PieceColor.WHITE else " piece-black"
+                symbol = pieces_unicode[piece.type]
+            html.append(f'<span class="{square_class}{piece_class}">{symbol}</span>')
         html.append(f'<span class="coordinate-row">{8-i}</span></div>')
     
     # Add column coordinates at the bottom

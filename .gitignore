@@ -2,3 +2,10 @@
 /venv/
 .DS_Store
 /target/
+/.idea/compiler.xml
+/.idea/jarRepositories.xml
+/.idea/misc.xml
+/.idea/modules.xml
+/npl-chess.iml
+/.idea/vcs.xml
+/.idea/workspace.xml
